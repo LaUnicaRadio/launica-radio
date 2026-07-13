@@ -118,6 +118,13 @@
 
   /* ── now playing ── */
   .np{transform:rotate(.5deg);margin-top:2px}
+  .np .program{
+    display:inline-flex;align-items:center;gap:7px;
+    font-family:"American Typewriter","Courier New",monospace;font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ground);background:var(--green);padding:5px 11px;border-radius:2px;
+    transform:rotate(-.9deg);box-shadow:2px 2px 0 rgba(0,0,0,.35);margin-bottom:12px;
+  }
+  .np .program[hidden]{display:none}
   .np .title{
     font-size:clamp(1.7rem,7.6vw,2.35rem);font-weight:700;line-height:1;letter-spacing:-.01em;text-wrap:balance;
     overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
@@ -182,15 +189,16 @@
   }
   .muro .wall{list-style:none;display:flex;flex-direction:column;gap:9px;min-height:60px;max-height:300px;overflow-y:auto;margin-bottom:16px;padding-right:4px}
   .muro .shout{
-    font-family:"American Typewriter","Courier New",monospace;font-size:.95rem;line-height:1.45;
-    background:var(--ground2);border-left:3px solid var(--green-dim);
-    padding:9px 12px;border-radius:2px;box-shadow:3px 3px 0 rgba(0,0,0,.3);
-    transform:rotate(var(--tilt,0deg));animation:shoutin .3s ease-out;word-break:break-word;
+    font-family:"American Typewriter","Courier New",monospace;font-size:.95rem;line-height:1.5;
+    padding:8px 2px;border-bottom:1px dotted rgba(239,231,210,.16);
+    animation:shoutin .25s ease-out;word-break:break-word;
   }
-  .muro .shout.leaving{animation:shoutout .5s ease-in forwards}
-  .muro .shout .who{color:var(--green);text-transform:uppercase;letter-spacing:.05em;margin-right:7px}
-  @keyframes shoutin{from{opacity:0;transform:translateY(6px) rotate(var(--tilt,0deg))}}
-  @keyframes shoutout{to{opacity:0;transform:translateX(-12px) rotate(var(--tilt,0deg))}}
+  .muro .shout:last-child{border-bottom:0}
+  .muro .shout .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:2px}
+  .muro .shout .who{color:var(--green);letter-spacing:.03em}
+  .muro .shout .when{color:var(--dim);font-size:.72rem;flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .muro .shout .body{color:var(--cream)}
+  @keyframes shoutin{from{opacity:0;transform:translateY(5px)}}
   .muro .empty{color:var(--dim);font-style:italic;font-family:"American Typewriter","Courier New",monospace;font-size:.9rem;padding:6px 2px}
   .muro form{display:flex;flex-direction:column;gap:9px}
   .muro .row{display:flex;gap:9px}
@@ -265,6 +273,7 @@
         </div>
 
         <div class="np">
+          <div class="program" id="program" hidden></div>
           <div class="title" id="title">Sintonizando…</div>
           <div class="artist" id="artist"></div>
         </div>
@@ -298,7 +307,7 @@
             </div>
             <button class="send" type="submit">Gritar</button>
           </form>
-          <p class="note">se borra solo · nada se guarda</p>
+          <p class="note">déjale algo a quien esté escuchando</p>
         </div>
       </div>
     </div>
@@ -336,8 +345,7 @@
     live.forEach(m => {
       const el = document.createElement("div");
       el.className = "shout";
-      el.style.setProperty("--tilt", tiltFor(m.id));
-      el.innerHTML = `<span class="who">${esc(m.name)}</span>${esc(m.text)}`;
+      el.innerHTML = `<div class="head"><span class="who">${esc(m.name)}</span><span class="when">${esc(m.t||"")}</span></div><div class="body">${esc(m.text)}</div>`;
       wall.appendChild(el);
     });
     wall.scrollTop = wall.scrollHeight;
@@ -385,7 +393,7 @@
     relay.on("message", (t, payload) => {
       try {
         const m = JSON.parse(payload.toString());
-        if (m && m.id && m.text) addShout({ id: m.id, name: String(m.name || "anónimo").slice(0,16), text: String(m.text).slice(0,120) });
+        if (m && m.id && m.text) addShout({ id: m.id, name: String(m.name || "anónimo").slice(0,16), text: String(m.text).slice(0,120), t: String(m.t || "").slice(0,5) });
       } catch (_) {}
     });
     relay.on("error", () => {});
@@ -396,7 +404,8 @@
     const name = $("shoutname").value.trim(), text = $("shoutmsg").value.trim();
     if (!text) return;
     if (name) localStorage.setItem("lu_name", name);
-    const m = { id: uid(), name: name || "anónimo", text };
+    const t = new Date().toLocaleTimeString("es-CO", { hour12:false, timeZone:"America/Bogota", hour:"2-digit", minute:"2-digit" });
+    const m = { id: uid(), name: name || "anónimo", text, t };
     if (relay && relay.connected) relay.publish(TOPIC, JSON.stringify(m)); // echoes back to us too
     else addShout(m); // offline fallback: at least show it locally
     $("shoutmsg").value = "";
@@ -453,9 +462,13 @@
     try{
       const r = await fetch(`${host}/api/nowplaying_static/${STATION}.json?t=${Date.now()}`);
       const d = await r.json();
-      const s = (d.now_playing||{}).song || {};
+      const np = d.now_playing || {};
+      const s = np.song || {};
       $("title").textContent = d.is_online ? (s.title || "—") : "Fuera del aire";
       $("artist").textContent = d.is_online ? (s.artist || "") : "vuelve pronto";
+      const prog = (np.playlist || "").trim(), pel = $("program");
+      if (d.is_online && prog){ pel.textContent = "▮ " + prog; pel.hidden = false; }
+      else pel.hidden = true;
       $("onair").textContent = d.is_online ? "en vivo" : "off";
       const art = $("art");
       if (d.is_online && s.art) { if (art.src !== s.art) art.src = s.art; }
