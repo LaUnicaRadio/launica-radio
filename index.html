@@ -118,13 +118,17 @@
 
   /* ── now playing ── */
   .np{transform:rotate(.5deg);margin-top:2px}
+  .np .nowbar{display:flex;flex-direction:column;gap:7px;margin-bottom:12px}
+  .np .prognow, .np .prognext{display:flex;align-items:center;gap:9px}
+  .np .prognow[hidden], .np .prognext[hidden]{display:none}
+  .np .plabel{font-family:"American Typewriter","Courier New",monospace;font-size:.62rem;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);flex:0 0 auto}
   .np .program{
     display:inline-flex;align-items:center;gap:7px;
     font-family:"American Typewriter","Courier New",monospace;font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;
     color:var(--ground);background:var(--green);padding:5px 11px;border-radius:2px;
-    transform:rotate(-.9deg);box-shadow:2px 2px 0 rgba(0,0,0,.35);margin-bottom:12px;
+    transform:rotate(-.9deg);box-shadow:2px 2px 0 rgba(0,0,0,.35);
   }
-  .np .program[hidden]{display:none}
+  .np .program.next{background:transparent;color:var(--green);border:1.5px solid var(--green-dim);box-shadow:none;transform:rotate(.6deg)}
   .np .title{
     font-size:clamp(1.7rem,7.6vw,2.35rem);font-weight:700;line-height:1;letter-spacing:-.01em;text-wrap:balance;
     overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
@@ -272,7 +276,16 @@
         </div>
 
         <div class="np">
-          <div class="program" id="program" hidden></div>
+          <div class="nowbar">
+            <div class="prognow" id="prognow" hidden>
+              <span class="plabel">ahora sonando</span>
+              <span class="program" id="program"></span>
+            </div>
+            <div class="prognext" id="prognext" hidden>
+              <span class="plabel">a continuación</span>
+              <span class="program next" id="programnext"></span>
+            </div>
+          </div>
           <div class="title" id="title">Sintonizando…</div>
           <div class="artist" id="artist"></div>
         </div>
@@ -453,9 +466,13 @@
       const s = np.song || {};
       $("title").textContent = d.is_online ? (s.title || "—") : "Fuera del aire";
       $("artist").textContent = d.is_online ? (s.artist || "") : "vuelve pronto";
-      const prog = (np.playlist || "").trim(), pel = $("program");
-      if (d.is_online && prog){ pel.textContent = "▮ " + prog; pel.hidden = false; }
-      else pel.hidden = true;
+      const prog = (np.playlist || "").trim();
+      if (d.is_online && prog){ $("program").textContent = "▮ " + prog; $("prognow").hidden = false; }
+      else $("prognow").hidden = true;
+      // up next — appears automatically once scheduling puts a different playlist next
+      const nx = ((d.playing_next || {}).playlist || "").trim();
+      if (d.is_online && nx && nx.toLowerCase() !== prog.toLowerCase()){ $("programnext").textContent = "▮ " + nx; $("prognext").hidden = false; }
+      else $("prognext").hidden = true;
       $("onair").textContent = d.is_online ? "en vivo" : "off";
       const art = $("art");
       if (d.is_online && s.art) { if (art.src !== s.art) art.src = s.art; }
