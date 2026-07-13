@@ -245,7 +245,6 @@
     font-size:.74rem;letter-spacing:.28em;color:var(--dim);text-transform:uppercase;text-align:center;
   }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
 </head>
 <body>
   <div class="wrap">
@@ -307,7 +306,7 @@
             </div>
             <button class="send" type="submit">Gritar</button>
           </form>
-          <p class="note">déjale algo a quien esté escuchando</p>
+          <p class="note">los mensajes se quedan ~2 horas, luego se van</p>
         </div>
       </div>
     </div>
@@ -319,26 +318,20 @@
 (() => {
   const STATION = "la_unixa";
   const POINTER = "pointer.json";
-  let host = null;
+  let host = null, muroHost = null;
   const $ = id => document.getElementById(id);
   $("duck").src = document.querySelector('link[rel=icon]').href;
 
   const tick = () => { $("clock").textContent = new Date().toLocaleTimeString("es-CO",{hour12:false,timeZone:"America/Bogota"}); };
   tick(); setInterval(tick, 1000);
 
-  // ── el muro: public ephemeral shoutbox (broadcast over MQTT; nothing stored) ──
+  // ── el muro: shoutbox served by the radio VM; messages expire ~2h ──
   const wall = $("wall");
-  const STORE = "lu_muro", MAX = 60;
-  const tilts = ["-1.2deg","0.8deg","-0.5deg","1.1deg","-0.9deg"];
-  let live = [];
-  const seen = new Set();
+  let live = [], lastSig = "";
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const tiltFor = id => tilts[[...String(id)].reduce((a,c)=>a+c.charCodeAt(0),0) % tilts.length];
   const savedName = localStorage.getItem("lu_name");
   if (savedName) $("shoutname").value = savedName;
 
-  function save(){ try{ localStorage.setItem(STORE, JSON.stringify(live.slice(-MAX))); }catch(_){} }
   function renderWall(){
     if (!live.length){ wall.innerHTML = '<div class="empty">sé el primero en gritar…</div>'; return; }
     wall.innerHTML = "";
@@ -350,19 +343,12 @@
     });
     wall.scrollTop = wall.scrollHeight;
   }
-  function addShout(m){
-    if (!m || !m.id || seen.has(m.id)) return;
-    seen.add(m.id);
-    live.push(m);
-    if (live.length > MAX) live.shift();
-    save();
-    renderWall();
+  function applyServer(msgs){
+    const norm = msgs.map(m => ({ id: m.id, name: String(m.name || "anónimo"), text: String(m.text || ""), t: String(m.t || "") }));
+    const sig = norm.map(m => m.id).join(",");
+    if (sig === lastSig) return;   // unchanged → skip re-render (no flicker)
+    lastSig = sig; live = norm; renderWall();
   }
-  // restore this device's recent history so the wall keeps its messages
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORE) || "[]");
-    if (Array.isArray(saved)) saved.forEach(m => { if (m && m.id && m.text && !seen.has(m.id)) { seen.add(m.id); live.push(m); } });
-  } catch(_) {}
   renderWall();
 
   // emoji picker (button on the message box opens a small dialog)
@@ -382,34 +368,34 @@
     }
   });
 
-  // public relay: keyless public MQTT broker over WebSockets, ephemeral (no history)
-  const TOPIC = "launica/muro/v1";
-  let relay = null;
-  try {
-    relay = mqtt.connect("wss://broker.hivemq.com:8884/mqtt", {
-      clientId: "lu_" + uid(), reconnectPeriod: 5000, connectTimeout: 8000
-    });
-    relay.on("connect", () => relay.subscribe(TOPIC));
-    relay.on("message", (t, payload) => {
-      try {
-        const m = JSON.parse(payload.toString());
-        if (m && m.id && m.text) addShout({ id: m.id, name: String(m.name || "anónimo").slice(0,16), text: String(m.text).slice(0,120), t: String(m.t || "").slice(0,5) });
-      } catch (_) {}
-    });
-    relay.on("error", () => {});
-  } catch (_) { relay = null; }
+  // pull history + new messages from the radio VM's muro service (muroHost set in getHost)
+  async function pollMuro(){
+    if (!muroHost) return;
+    try {
+      const r = await fetch(`${muroHost}/muro?t=${Date.now()}`);
+      const d = await r.json();
+      if (Array.isArray(d.messages)) applyServer(d.messages);
+    } catch (_) {}
+  }
+  setInterval(pollMuro, 5000);
 
-  $("shoutform").addEventListener("submit", e => {
+  $("shoutform").addEventListener("submit", async e => {
     e.preventDefault();
     const name = $("shoutname").value.trim(), text = $("shoutmsg").value.trim();
     if (!text) return;
     if (name) localStorage.setItem("lu_name", name);
-    const t = new Date().toLocaleTimeString("es-CO", { hour12:false, timeZone:"America/Bogota", hour:"2-digit", minute:"2-digit" });
-    const m = { id: uid(), name: name || "anónimo", text, t };
-    if (relay && relay.connected) relay.publish(TOPIC, JSON.stringify(m)); // echoes back to us too
-    else addShout(m); // offline fallback: at least show it locally
     $("shoutmsg").value = "";
     pop.hidden = true; emojiBtn.setAttribute("aria-expanded", "false");
+    if (muroHost) {
+      try {
+        await fetch(`${muroHost}/muro`, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, text }) });
+        pollMuro();
+      } catch (_) {}
+    } else {
+      // radio offline: show locally so it doesn't feel broken
+      const t = new Date().toLocaleTimeString("es-CO",{hour12:false,timeZone:"America/Bogota",hour:"2-digit",minute:"2-digit"});
+      live.push({ id:"local"+Date.now(), name:name||"anónimo", text, t }); renderWall();
+    }
   });
 
   const audio = new Audio();
@@ -453,6 +439,7 @@
       const r = await fetch(`${POINTER}?t=${Date.now()}`);
       const j = await r.json();
       if (j.host && j.host !== host) host = j.host;
+      if (j.muro && j.muro !== muroHost) { muroHost = j.muro.replace(/\/$/, ""); pollMuro(); }
     }catch(e){}
   }
 
