@@ -464,26 +464,35 @@
       const d = await r.json();
       const np = d.now_playing || {};
       const s = np.song || {};
-      $("title").textContent = d.is_online ? (s.title || "—") : "Fuera del aire";
-      $("artist").textContent = d.is_online ? (s.artist || "") : "vuelve pronto";
+      const live = d.live || {};
+      // When a DJ is live, ignore the auto-DJ metadata — show the streamer instead.
+      const isLive = !!live.is_live;
+      const djName = (live.streamer_name || "").trim();
+      $("title").textContent = !d.is_online ? "Fuera del aire"
+                              : isLive ? "en vivo"
+                              : (s.title || "—");
+      $("artist").textContent = !d.is_online ? "vuelve pronto"
+                               : isLive ? (djName ? `ahora sonando "${djName}"` : "en vivo desde la cabina")
+                               : (s.artist || "");
       const prog = (np.playlist || "").trim();
-      if (d.is_online && prog){ $("program").textContent = "▮ " + prog; $("prognow").hidden = false; }
+      if (d.is_online && !isLive && prog){ $("program").textContent = "▮ " + prog; $("prognow").hidden = false; }
       else $("prognow").hidden = true;
       // up next — appears automatically once scheduling puts a different playlist next
       const nx = ((d.playing_next || {}).playlist || "").trim();
-      if (d.is_online && nx && nx.toLowerCase() !== prog.toLowerCase()){ $("programnext").textContent = "▮ " + nx; $("prognext").hidden = false; }
+      if (d.is_online && !isLive && nx && nx.toLowerCase() !== prog.toLowerCase()){ $("programnext").textContent = "▮ " + nx; $("prognext").hidden = false; }
       else $("prognext").hidden = true;
-      $("onair").textContent = d.is_online ? "en vivo" : "off";
+      $("onair").textContent = !d.is_online ? "off" : isLive ? "en vivo · dj" : "en vivo";
       const art = $("art");
-      if (d.is_online && s.art) { if (art.src !== s.art) art.src = s.art; }
+      // during a live DJ set there is no per-track art — clear the disc.
+      if (d.is_online && !isLive && s.art) { if (art.src !== s.art) art.src = s.art; }
       else { art.removeAttribute("src"); art.classList.remove("on"); }
       // tell the phone's lock-screen player what's actually playing
       if ("mediaSession" in navigator && d.is_online){
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: s.title || "La Única",
-          artist: s.artist || "en vivo",
+          title: isLive ? "en vivo" : (s.title || "La Única"),
+          artist: isLive ? (djName || "en vivo") : (s.artist || "en vivo"),
           album: "La Única — radio en vivo",
-          artwork: s.art ? [{ src: s.art, sizes: "512x512", type: "image/jpeg" }] : []
+          artwork: (!isLive && s.art) ? [{ src: s.art, sizes: "512x512", type: "image/jpeg" }] : []
         });
       }
       const hist = (d.song_history||[]).slice(0,6);
