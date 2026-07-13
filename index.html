@@ -203,9 +203,22 @@
   .muro input:focus{outline:none;border-color:var(--green)}
   .muro .name-in{width:40%;flex:0 0 auto}
   .muro .msg-in{flex:1;min-width:0}
-  .muro .emojis{display:flex;gap:3px;flex-wrap:wrap}
-  .muro .emojis button{font-size:1.25rem;line-height:1;background:transparent;border:0;cursor:pointer;padding:3px 5px;border-radius:4px}
-  .muro .emojis button:hover{background:rgba(239,231,210,.09)}
+  .muro .msgwrap{position:relative;flex:1;min-width:0}
+  .muro .msgwrap .msg-in{width:100%;padding-right:42px}
+  .muro .emoji-toggle{
+    position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    background:transparent;border:0;cursor:pointer;font-size:1.2rem;line-height:1;color:var(--dim);padding:4px;
+  }
+  .muro .emoji-toggle:hover{color:var(--cream)}
+  .muro .emoji-pop{
+    position:absolute;right:0;bottom:calc(100% + 8px);z-index:6;
+    display:grid;grid-template-columns:repeat(6,1fr);gap:2px;
+    background:var(--ground2);border:1.5px solid rgba(239,231,210,.2);
+    padding:8px;border-radius:4px;box-shadow:4px 4px 0 rgba(0,0,0,.4);
+  }
+  .muro .emoji-pop[hidden]{display:none}
+  .muro .emoji-pop button{font-size:1.35rem;line-height:1;background:transparent;border:0;cursor:pointer;padding:4px;border-radius:4px}
+  .muro .emoji-pop button:hover{background:rgba(239,231,210,.1)}
   .muro .send{
     align-self:flex-start;font-family:"American Typewriter","Courier New",monospace;
     text-transform:uppercase;letter-spacing:.16em;font-size:.82rem;
@@ -224,6 +237,7 @@
     font-size:.74rem;letter-spacing:.28em;color:var(--dim);text-transform:uppercase;text-align:center;
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
 </head>
 <body>
   <div class="wrap">
@@ -274,10 +288,13 @@
           <form id="shoutform" autocomplete="off">
             <div class="row">
               <input class="name-in" id="shoutname" maxlength="16" placeholder="tu nombre" aria-label="Tu nombre">
-              <input class="msg-in" id="shoutmsg" maxlength="120" placeholder="grita algo…" aria-label="Tu mensaje">
-            </div>
-            <div class="emojis" id="emojis" aria-label="Emojis">
-              <button type="button">💀</button><button type="button">🔥</button><button type="button">😭</button><button type="button">✨</button><button type="button">🥴</button><button type="button">👽</button><button type="button">🛸</button><button type="button">💚</button>
+              <div class="msgwrap">
+                <input class="msg-in" id="shoutmsg" maxlength="120" placeholder="grita algo…" aria-label="Tu mensaje">
+                <button class="emoji-toggle" id="emojibtn" type="button" aria-label="Insertar emoji" aria-expanded="false">☻</button>
+                <div class="emoji-pop" id="emojis" hidden>
+                  <button type="button">💀</button><button type="button">🔥</button><button type="button">😭</button><button type="button">✨</button><button type="button">🥴</button><button type="button">👽</button><button type="button">🛸</button><button type="button">💚</button><button type="button">🗿</button><button type="button">🤪</button><button type="button">😵‍💫</button><button type="button">🫠</button>
+                </div>
+              </div>
             </div>
             <button class="send" type="submit">Gritar</button>
           </form>
@@ -300,12 +317,15 @@
   const tick = () => { $("clock").textContent = new Date().toLocaleTimeString("es-CO",{hour12:false,timeZone:"America/Bogota"}); };
   tick(); setInterval(tick, 1000);
 
-  // ── el muro: ephemeral local shoutbox (nothing stored; messages fade out) ──
+  // ── el muro: public ephemeral shoutbox (broadcast over MQTT; nothing stored) ──
   const wall = $("wall");
   const TTL = 24000;
   const tilts = ["-1.2deg","0.8deg","-0.5deg","1.1deg","-0.9deg"];
-  let live = [], nextId = 1;
+  let live = [];
+  const seen = new Set();
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const tiltFor = id => tilts[[...String(id)].reduce((a,c)=>a+c.charCodeAt(0),0) % tilts.length];
   const savedName = localStorage.getItem("lu_name");
   if (savedName) $("shoutname").value = savedName;
 
@@ -315,35 +335,70 @@
     live.forEach(m => {
       const el = document.createElement("div");
       el.className = "shout" + (m.leaving ? " leaving" : "");
-      el.style.setProperty("--tilt", tilts[m.id % tilts.length]);
+      el.style.setProperty("--tilt", tiltFor(m.id));
       el.innerHTML = `<span class="who">${esc(m.name)}</span>${esc(m.text)}`;
       wall.appendChild(el);
     });
   }
-  function addShout(name, text){
-    const m = { id: nextId++, name: name || "anónimo", text, leaving: false };
+  function addShout(m){
+    if (!m || !m.id || seen.has(m.id)) return;
+    seen.add(m.id);
+    m.leaving = false;
     live.push(m);
-    if (live.length > 8) live.shift();
+    if (live.length > 10) live.shift();
     renderWall();
     setTimeout(() => {
       m.leaving = true; renderWall();
       setTimeout(() => { live = live.filter(x => x !== m); renderWall(); }, 500);
     }, TTL);
   }
-  $("emojis").addEventListener("click", e => {
+  renderWall();
+
+  // emoji picker (button on the message box opens a small dialog)
+  const pop = $("emojis"), emojiBtn = $("emojibtn");
+  emojiBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    const willOpen = pop.hidden;
+    pop.hidden = !willOpen;
+    emojiBtn.setAttribute("aria-expanded", String(willOpen));
+  });
+  pop.addEventListener("click", e => {
     if (e.target.tagName === "BUTTON"){ const i = $("shoutmsg"); i.value += e.target.textContent; i.focus(); }
   });
+  document.addEventListener("click", e => {
+    if (!pop.hidden && !pop.contains(e.target) && e.target !== emojiBtn){
+      pop.hidden = true; emojiBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  // public relay: keyless public MQTT broker over WebSockets, ephemeral (no history)
+  const TOPIC = "launica/muro/v1";
+  let relay = null;
+  try {
+    relay = mqtt.connect("wss://broker.hivemq.com:8884/mqtt", {
+      clientId: "lu_" + uid(), reconnectPeriod: 5000, connectTimeout: 8000
+    });
+    relay.on("connect", () => relay.subscribe(TOPIC));
+    relay.on("message", (t, payload) => {
+      try {
+        const m = JSON.parse(payload.toString());
+        if (m && m.id && m.text) addShout({ id: m.id, name: String(m.name || "anónimo").slice(0,16), text: String(m.text).slice(0,120) });
+      } catch (_) {}
+    });
+    relay.on("error", () => {});
+  } catch (_) { relay = null; }
+
   $("shoutform").addEventListener("submit", e => {
     e.preventDefault();
     const name = $("shoutname").value.trim(), text = $("shoutmsg").value.trim();
     if (!text) return;
     if (name) localStorage.setItem("lu_name", name);
-    addShout(name, text);
+    const m = { id: uid(), name: name || "anónimo", text };
+    if (relay && relay.connected) relay.publish(TOPIC, JSON.stringify(m)); // echoes back to us too
+    else addShout(m); // offline fallback: at least show it locally
     $("shoutmsg").value = "";
+    pop.hidden = true; emojiBtn.setAttribute("aria-expanded", "false");
   });
-  renderWall();
-  ["¡suena increíble! 🔥","desde medellín 💚","otra vez esta rola 🥴"]
-    .forEach((t,i) => setTimeout(() => addShout(["lucho","sara","anónimo"][i], t), 500 + i*1500));
 
   const audio = new Audio();
   audio.preload = "none";
