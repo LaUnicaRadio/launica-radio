@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La Unica — Radio</title>
+<style>
+  :root {
+    --bg: #120a1f;
+    --card: #1e1130;
+    --accent: #b388ff;
+    --accent2: #382055;
+    --text: #f2ecff;
+    --dim: rgba(242,236,255,.6);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 800px at 70% -10%, #2a1840 0%, var(--bg) 55%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  header { text-align: center; padding: 64px 20px 24px; }
+  header h1 {
+    font-size: clamp(2.6rem, 8vw, 4.5rem);
+    letter-spacing: .35em;
+    text-transform: uppercase;
+    font-weight: 800;
+    background: linear-gradient(90deg, var(--accent), #7c4dff, var(--accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  header p { color: var(--dim); letter-spacing: .2em; margin-top: 8px; text-transform: uppercase; font-size: .8rem; }
+
+  .player {
+    background: linear-gradient(135deg, var(--accent2), var(--card));
+    border-radius: 20px;
+    padding: 22px;
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    width: min(480px, 92vw);
+    box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    margin: 24px 0;
+  }
+  .player img {
+    width: 96px; height: 96px;
+    border-radius: 12px;
+    object-fit: cover;
+    background: #2a1840;
+  }
+  .meta { flex: 1; min-width: 0; }
+  .live {
+    font-size: .65rem; letter-spacing: .25em; color: var(--accent);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .live .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #ff5b7f;
+    animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  .title { font-weight: 700; font-size: 1.05rem; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .artist { color: var(--dim); font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .controls button {
+    width: 44px; height: 44px; border-radius: 50%;
+    border: 0; cursor: pointer; font-size: 17px;
+    background: var(--accent); color: var(--card);
+    transition: transform .15s;
+  }
+  .controls button:hover { transform: scale(1.08); }
+  .controls input[type=range] { flex: 1; accent-color: var(--accent); }
+
+  .history {
+    width: min(480px, 92vw);
+    background: rgba(30,17,48,.6);
+    border-radius: 16px;
+    padding: 18px 22px;
+    margin-bottom: 40px;
+  }
+  .history h2 { font-size: .7rem; letter-spacing: .25em; color: var(--dim); text-transform: uppercase; margin-bottom: 10px; }
+  .history ul { list-style: none; }
+  .history li {
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(179,136,255,.08);
+    font-size: .85rem;
+    display: flex; justify-content: space-between; gap: 12px;
+  }
+  .history li:last-child { border-bottom: 0; }
+  .history .t { color: var(--dim); white-space: nowrap; }
+  footer { margin-top: auto; padding: 24px; color: rgba(242,236,255,.35); font-size: .75rem; letter-spacing: .1em; }
+  .offline { color: var(--dim); font-style: italic; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>La Unica</h1>
+    <p>Independent web radio</p>
+  </header>
+
+  <div class="player">
+    <img id="art" alt="" src="">
+    <div class="meta">
+      <div class="live"><span class="dot"></span> ON AIR</div>
+      <div class="title" id="title">Tuning in…</div>
+      <div class="artist" id="artist"></div>
+      <div class="controls">
+        <button id="play" aria-label="Play">▶</button>
+        <input id="vol" type="range" min="0" max="1" step="0.05" value="0.9" aria-label="Volume">
+      </div>
+    </div>
+  </div>
+
+  <div class="history">
+    <h2>Recently played</h2>
+    <ul id="hist"><li class="offline">Loading…</li></ul>
+  </div>
+
+  <footer>LA UNICA © <span id="yr"></span></footer>
+
+<script>
+(() => {
+  const STATION = "la_unixa";
+  // pointer.json lives next to this page and is auto-updated by the radio server
+  const POINTER = "pointer.json";
+
+  let host = null;
+  const $ = id => document.getElementById(id);
+  $("yr").textContent = new Date().getFullYear();
+
+  const audio = new Audio();
+  audio.preload = "none";
+  let playing = false;
+
+  $("play").onclick = () => {
+    if (!host) return;
+    if (playing) {
+      audio.pause(); audio.src = "";
+      $("play").textContent = "▶";
+    } else {
+      audio.src = `${host}/listen/${STATION}/radio.mp3?t=${Date.now()}`;
+      audio.volume = $("vol").value;
+      audio.play();
+      $("play").textContent = "❚❚";
+    }
+    playing = !playing;
+  };
+  $("vol").oninput = () => audio.volume = $("vol").value;
+
+  async function getHost() {
+    try {
+      const r = await fetch(`${POINTER}?t=${Date.now()}`);
+      const j = await r.json();
+      if (j.host && j.host !== host) {
+        host = j.host;
+      }
+    } catch (e) { /* keep last known host */ }
+  }
+
+  async function refresh() {
+    if (!host) await getHost();
+    if (!host) return;
+    try {
+      const r = await fetch(`${host}/api/nowplaying_static/${STATION}.json?t=${Date.now()}`);
+      const d = await r.json();
+      const np = d.now_playing || {};
+      const s = np.song || {};
+      $("title").textContent = d.is_online ? (s.title || "—") : "Station offline";
+      $("artist").textContent = d.is_online ? (s.artist || "") : "check back soon";
+      if (s.art) $("art").src = s.art;
+      const hist = (d.song_history || []).slice(0, 6);
+      $("hist").innerHTML = hist.length
+        ? hist.map(h => {
+            const t = new Date(h.played_at * 1000);
+            const hh = t.getHours().toString().padStart(2,"0");
+            const mm = t.getMinutes().toString().padStart(2,"0");
+            return `<li><span>${h.song.artist} — ${h.song.title}</span><span class="t">${hh}:${mm}</span></li>`;
+          }).join("")
+        : '<li class="offline">Nothing yet</li>';
+    } catch (e) {
+      // tunnel may have rotated: re-resolve pointer next tick
+      host = null;
+    }
+  }
+
+  getHost().then(refresh);
+  setInterval(refresh, 12000);
+  setInterval(getHost, 60000);
+})();
+</script>
+</body>
+</html>
